@@ -1,0 +1,210 @@
+import java.io.FileWriter;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+
+public class LogsGenerator {
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+
+
+        Map<String, String> logdata = new HashMap<>();
+        logdata.put("failed", "D:\\anusiya\\jsonlogs\\failed.json");
+        logdata.put("success", "D:\\anusiya\\jsonlogs\\success.json");
+        logdata.put("process", "D:\\anusiya\\jsonlogs\\process.json");
+
+        System.out.print("Enter the number of actions: ");
+        int actionsCount = scanner.nextInt();
+        scanner.nextLine();
+
+
+        List<Map<String, Object>> actionsConfig = new ArrayList<>();
+        Map<String, List<Map<String, List<String>>>> linkedFieldsMap = new HashMap<>();
+        for (int i = 1; i <= actionsCount; i++) {
+            System.out.println("\nAction " + i + ":");
+
+            System.out.print("Enter the action name from logdata (e.g., failed or success): ");
+            String actionName = scanner.nextLine();
+            while (!logdata.containsKey(actionName)) {
+                System.out.print("Invalid action name. Enter again: ");
+                actionName = scanner.nextLine();
+            }
+
+            Map<String, Object> actionConfig = new HashMap<>();
+            actionConfig.put("actionName", actionName);
+
+            System.out.print("Enter the number of events in each trigger for this action: ");
+            int eventCount = scanner.nextInt();
+            actionConfig.put("eventCount", eventCount);
+
+            System.out.print("Enter the duration (in seconds) for this action: ");
+            int duration = scanner.nextInt();
+            actionConfig.put("duration", duration);
+            scanner.nextLine();
+
+            System.out.print("Enter the constant fields (comma-separated, e.g., username,deviceName): ");
+            String constantFieldsInput = scanner.nextLine();
+            List<String> constantFields = constantFieldsInput.isEmpty() ? new ArrayList<>() : Arrays.asList(constantFieldsInput.split(","));
+            actionConfig.put("constantFields", constantFields);
+
+            System.out.print("Enter the distinct fields (comma-separated or leave empty): ");
+            String distinctFieldsInput = scanner.nextLine();
+            List<String> distinctFields = distinctFieldsInput.isEmpty() ? new ArrayList<>() : Arrays.asList(distinctFieldsInput.split(","));
+            actionConfig.put("distinctFields", distinctFields);
+            System.out.print("Enter the source action for linked fields (or leave empty): ");
+            String sourceAction = scanner.nextLine();
+            if (!sourceAction.isEmpty()) {
+                System.out.print("Enter the linked fields (comma-separated, e.g., username,deviceName): ");
+                String linkedFieldsInput = scanner.nextLine();
+                List<String> linkedFields = linkedFieldsInput.isEmpty() ? new ArrayList<>() : Arrays.asList(linkedFieldsInput.split(","));
+
+                linkedFieldsMap.putIfAbsent(sourceAction, new ArrayList<>());
+                Map<String, List<String>> targetFieldsMap = new HashMap<>();
+                targetFieldsMap.put(actionName, linkedFields);
+                linkedFieldsMap.get(sourceAction).add(targetFieldsMap);
+                System.out.println("lllllllll");
+                System.out.println(linkedFieldsMap);
+            }
+            if (i > 1) {
+                System.out.print("Does this action follow the previous one? (yes/no): ");
+                String followResponse = scanner.nextLine().trim().toLowerCase();
+                if (followResponse.equals("yes")) {
+                    System.out.print("Enter the follow-by time (in seconds) after the previous action: ");
+                    int followBy = scanner.nextInt();
+                    actionConfig.put("followBy", followBy);
+                    scanner.nextLine();
+                } else {
+                    actionConfig.put("followBy", 0);
+                }
+            }
+
+            actionsConfig.add(actionConfig);
+        }
+
+
+        System.out.print("\nEnter the number of times the rule should trigger: ");
+        int ruleTriggers = scanner.nextInt();
+        scanner.nextLine();
+
+
+        List<Map<String, String>> logs = generateLogs(ruleTriggers, actionsConfig, linkedFieldsMap);
+
+
+        String outputFilePath = "generated_logs.json";
+        writeLogsToFile(logs, outputFilePath);
+
+        System.out.println("\nLogs generated and written to: " + outputFilePath);
+    }
+
+    public static List<Map<String, String>> generateLogs(
+            int ruleTriggers,
+            List<Map<String, Object>> actionsConfig,
+            Map<String, List<Map<String, List<String>>>> linkedFieldsMap
+    ) {
+        List<Map<String, String>> logs = new ArrayList<>();
+        LocalDateTime baseTime = LocalDateTime.now();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        for (int i = 0; i < ruleTriggers; i++) {
+            LocalDateTime actionTime = baseTime;
+            Map<String, Map<String, String>> lastActionLogs = new HashMap<>();
+
+            for (Map<String, Object> actionConfig : actionsConfig) {
+                String actionName = (String) actionConfig.get("actionName");
+                int eventCount = (int) actionConfig.get("eventCount");
+                int duration = (int) actionConfig.get("duration");
+                int followBy = actionConfig.containsKey("followBy") ? (int) actionConfig.get("followBy") : 0;
+
+                List<String> constantFields = (List<String>) actionConfig.get("constantFields");
+                List<String> distinctFields = (List<String>) actionConfig.get("distinctFields");
+
+                // Generate events for the current action
+                for (int j = 0; j < eventCount; j++) {
+                    LocalDateTime eventTime = actionTime.plusSeconds(j * (duration / Math.max(1, eventCount)));
+                    Map<String, String> eventLog = new HashMap<>();
+                    eventLog.put("MESSAGE", actionName.equals("failed") ? "Logon failed" : "Logon success");
+                    eventLog.put("TIME", eventTime.format(formatter));
+                    eventLog.put("SERVICENAME", "AuthService");
+                    eventLog.put("IENAME", actionName);
+
+                    // Add constant fields
+                    if (constantFields != null && !constantFields.isEmpty()) {
+                        for (String field : constantFields) {
+                            eventLog.put(field, field + (i + 1));
+                        }
+                    }
+
+                    // Add distinct fields
+                    if (distinctFields != null && !distinctFields.isEmpty()) {
+                        for (String field : distinctFields) {
+                            eventLog.put(field, field + "_" + UUID.randomUUID().toString());
+                        }
+                    }
+
+
+                    for (String sourceAction : linkedFieldsMap.keySet()) {
+                        if (linkedFieldsMap.get(sourceAction).stream().anyMatch(map -> map.containsKey(actionName))) {
+                            List<Map<String, List<String>>> dependencies = linkedFieldsMap.get(sourceAction);
+                            for (Map<String, List<String>> dependency : dependencies) {
+                                if (dependency.containsKey(actionName)) {
+                                    List<String> fieldsToLink = dependency.get(actionName);
+
+
+                                    if (lastActionLogs.containsKey(sourceAction)) {
+                                        Map<String, String> sourceLog = lastActionLogs.get(sourceAction);
+                                        for (String field : fieldsToLink) {
+                                            if (sourceLog.containsKey(field)) {
+                                                eventLog.put(field, sourceLog.get(field));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    logs.add(eventLog);
+
+
+                    if (j == eventCount - 1) {
+                        lastActionLogs.put(actionName, eventLog);
+                    }
+
+
+                    if (j == eventCount - 1) {
+                        actionTime = eventTime.plusSeconds(followBy);
+                    }
+                }
+            }
+
+
+            if (!actionsConfig.isEmpty()) {
+                Map<String, Object> lastActionConfig = actionsConfig.get(actionsConfig.size() - 1);
+                int lastEventCount = (int) lastActionConfig.get("eventCount");
+                int lastDuration = (int) lastActionConfig.get("duration");
+                int totalDuration = lastEventCount * (lastDuration / Math.max(1, lastEventCount));
+                baseTime = actionTime.plusSeconds(totalDuration);
+            }
+        }
+
+        return logs;
+    }
+
+
+    public static void writeLogsToFile(List<Map<String, String>> logs, String filePath) {
+        try (FileWriter fileWriter = new FileWriter(filePath)) {
+            fileWriter.write("[\n");
+            for (int i = 0; i < logs.size(); i++) {
+                fileWriter.write("  " + logs.get(i).toString().replace("=", ": ").replace(", ", ",\n  ").replace("{", "{\n  ").replace("}", "\n  }"));
+                if (i < logs.size() - 1) {
+                    fileWriter.write(",");
+                }
+                fileWriter.write("\n");
+            }
+            fileWriter.write("]");
+        } catch (IOException e) {
+            System.err.println("Error writing logs to file: " + e.getMessage());
+        }
+    }
+}
